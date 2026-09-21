@@ -1,0 +1,4 @@
+# Spend cap for `pytest --live`. Zero skips every live test. Raise it deliberately.
+max_spend_usd: 0.0
+jev_model: jev-latest
+rate_per_million: 0.042

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+index/
+data/
+results/*/raw/
+.cache/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+NOTES.local.md
