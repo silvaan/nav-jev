@@ -8,24 +8,15 @@ from pathlib import Path
 
 import typer
 
+from navjev.env import load_dotenv
+
 app = typer.Typer(add_completion=False, help=__doc__, no_args_is_help=True)
 dataset_app = typer.Typer(help="Freeze and inspect evaluation splits.")
 app.add_typer(dataset_app, name="dataset")
 
 
 def _load_env() -> None:
-    """Read `.env` into the environment without a dependency; existing values win."""
-    import os
-
-    env = Path(".env")
-    if not env.exists():
-        return
-    for line in env.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
+    load_dotenv()
 
 
 def _llm_client(config: str | None, max_spend_usd: float) -> object:
