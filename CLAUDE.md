@@ -1,39 +1,41 @@
 # Instructions for the coding agent
 
-This repository is a research artifact. Its value is the measurement, not the code, so
-correctness of the evaluation matters more than features. Read `docs/algorithm.md` and
-`docs/eval-protocol.md` before writing anything.
+nav-jev is a small tool: it indexes a document as its section tree and uses TypeSafe's
+Jev to decide which sections to open for a question. Keep it small. The public surface
+is `Navigator` (`navjev/navigator.py`) and the two CLI commands; everything else is an
+implementation detail that a user should not need to touch. Read `docs/algorithm.md`
+before changing the traversal.
 
 ## Hard rules
 
 1. **Never let Jev generate or extract text.** Jev returns a probability over options you
-   supplied. Every summary, every answer string, every node title comes from the parser or
-   from an LLM. If a task feels like "extract X", rewrite it as "here are the candidates
-   for X, which one is it".
+   supplied. Every summary and every title comes from the parser or from an LLM. If a
+   task feels like "extract X", rewrite it as "here are the candidates for X, which one
+   is it".
 2. **No arithmetic, counting, or date comparison inside a question.** Jev is documented as
    unreliable at all three. Compute in Python and pass the result in as state.
 3. **One judgment per question.** Do not ask "is this node relevant and should we stop".
    That is two questions.
 4. **Fan out, do not loop.** All children of a node go in one request, as independent
    questions sharing one state. Sequential per-child calls are a bug, not a style choice.
-   The same holds for the stop test, which rides along in the same request.
+   The stop test rides along in the same request.
 5. **Every question and every threshold lives in `src/navjev/traverse/questions.py`.**
-   No prompt text scattered across modules. A reviewer must read one file to audit the
-   policy.
-6. **Pin the model ID in results.** The response reports the versioned ID that answered.
-   Log it; thresholds are only valid against the version they were fitted on.
-7. **Do not report a benchmark number that a manifest in `results/` does not back.**
-   No estimated costs, no extrapolated latencies, no numbers in the README that a
-   `uv run nav-jev bench` invocation cannot reproduce.
-8. **Stub honestly.** If something is unimplemented, `raise NotImplementedError`. Never
-   return a plausible fake value from a function the evaluation will call.
+   No prompt text scattered across modules. A reader must go through one file to know
+   what the system asks.
+6. **Record the model ID.** The response reports the versioned ID that answered; it goes
+   in every trace. Thresholds tuned against one version are not valid against another.
+7. **Stub honestly.** If something is unimplemented, `raise NotImplementedError`. Never
+   return a plausible fake value.
+8. **No benchmark code here.** The evaluation harness is a separate project. Do not add
+   datasets, baselines, metrics or manifests to this repo.
 
 ## The Jev API, verbatim
 
 Endpoint `POST https://api.typesafe.ai/v1/systemone`, bearer auth, key in
 `TYPESAFE_API_KEY`. Python SDK is `typesafe-sdk` (Python 3.10+), exposing
 `TypeSafeClient`, `AsyncTypeSafeClient`, and the `Noul`, `Choice`, `Score` question
-classes.
+classes. The live docs at https://docs.typesafe.ai/llms.txt are the source of truth; the
+`typesafe` agent skill points at them.
 
 Request: `model`, `state` (a string, a JSON object, or a JSON array of text), and
 `questions`, a dict of question id to question. Every question has `type` and
@@ -53,44 +55,31 @@ Answer shapes:
 
 Limits: state plus all questions share about 64k tokens; state plus the longest single
 question must fit in about 32k. Text only. Errors: 401, 422 with the offending field,
-429, 529. Retry 429 and 529 with exponential backoff. Rate limits during early access are
-250k tokens per second and 1,200 requests per minute.
+429, 529. Retry 429 and 529 with exponential backoff (the SDK's retry policy does).
 
-Pricing at the time of writing is $0.042 per million input tokens, output free. The cost
-accounting module multiplies reported `usage.input_tokens` by a rate from the config, so
-the rate is never hardcoded in the code.
+Pricing at the time of writing is $0.042 per million input tokens, output free. Cost
+accounting multiplies reported `usage.input_tokens` by a rate passed in by the caller;
+the rate is never hardcoded.
 
-Install TypeSafe's own agent skill before working on the client, since models trained on
-LLM APIs invent request fields:
+## Layout
 
-```bash
-claude plugin marketplace add typesafe-ai/skills
-claude plugin install typesafe@typesafe-ai
 ```
-
-## Build order
-
-Work in this sequence and stop at each checkpoint for review.
-
-1. `types.py`, `jev.py`, and their tests, against a recorded-response fixture so the suite
-   runs with no API key.
-2. `build/`: Markdown and PDF parsers producing a `DocumentTree`, then LLM summarization
-   with an on-disk cache keyed by node content hash. Checkpoint: a tree for a real
-   document, inspectable as JSON.
-3. `traverse/`: questions, the beam search, the trace. Checkpoint: one query end to end
-   with a readable path.
-4. `baselines/`: BM25, dense plus reranker, and the LLM traversal policy over the *same*
-   tree, so the comparison isolates the policy rather than the index.
-5. `eval/`: datasets, metrics, threshold fitting, the runner, the manifest. Checkpoint:
-   a full run on a small split with a written manifest.
-6. `docs/findings.md` and the README numbers, last.
+src/navjev/
+  navigator.py   the facade: Navigator.add / search, sync and async
+  cli.py         nav-jev add, nav-jev ask
+  jev.py         Jev client: fan-out, spend cap, recording and replay
+  llm.py         the one module that calls a text LLM (OpenAI or Anthropic by model name)
+  build/         parsers, summaries, on-disk index
+  traverse/      questions.py, beam.py
+  types.py       TreeNode, DocumentTree, Expansion, Trace, RetrievalResult
+```
 
 ## Tooling
 
-Python 3.11+, `uv` for dependency management, `pytest`, `ruff`, `mypy` in strict mode on
-`src/`. Async throughout the retrieval path, since the point of the project is latency.
-Typer for the CLI. No network calls in the unit test suite; live tests sit behind a
-`--live` flag and a spend cap read from the config, defaulting to zero.
+Python 3.11+, `pytest`, `ruff`, `mypy` in strict mode on `src/`. Async in the retrieval
+path, with sync wrappers on the facade. No network calls in the unit suite; `pytest
+--live` runs the few paid tests, capped at cents. The Jev fixture in `tests/fixtures/` is
+a real recording; re-record it with `--live` after changing a question.
 
 ## Things that look like good ideas and are not
 
@@ -101,7 +90,8 @@ Typer for the CLI. No network calls in the unit test suite; live tests sit behin
   the decision needs; the full text blows the budget and, per TypeSafe's own guidance,
   accuracy falls as the state fills with irrelevant content.
 - Feeding the whole tree in one request. It defeats the purpose, which is to read only the
-  branches worth opening, and it is exactly the cost profile the project is testing against.
+  branches worth opening.
 - Treating a `score` of 1.4 as a magnitude. Levels are weakly calibrated against each
   other. Use it to pass a threshold or to rank, never to interpolate.
-- Reusing a threshold across model versions, datasets, or question rewrites. Refit.
+- Growing the public surface. If a feature needs a third class in the README, it probably
+  belongs in `Navigator` or nowhere.

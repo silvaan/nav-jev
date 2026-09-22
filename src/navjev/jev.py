@@ -244,9 +244,9 @@ class JevClient:
     Retries 429 and 529 with exponential backoff. Does not retry 401 or 422; a 422 names
     the offending field and is a bug in the caller, not a transient failure.
 
-    `max_spend_usd` defaults to zero, which blocks every paid call. Live tests and
-    benchmarks must raise it explicitly in their config, so an accidental run over a full
-    split cannot silently spend money.
+    `max_spend_usd` is an optional cap on what this client may spend, checked before every
+    request; `None` means uncapped, and `0.0` blocks every paid call, which is what the
+    test suite uses. Spend is always tracked in `usage`.
     """
 
     def __init__(
@@ -254,7 +254,7 @@ class JevClient:
         api_key: str | None = None,
         model: str = "jev-latest",
         max_concurrency: int = 8,
-        max_spend_usd: float = 0.0,
+        max_spend_usd: float | None = None,
         rate_per_million: float = 0.042,
         timeout_s: float = 30.0,
         base_url: str | None = None,
@@ -285,11 +285,10 @@ class JevClient:
         return self._usage
 
     def _check_budget(self) -> None:
+        if self.max_spend_usd is None:
+            return
         if self.max_spend_usd <= 0.0:
-            raise JevBudgetExceeded(
-                "max_spend_usd is zero: every paid call is blocked. Raise it explicitly "
-                "in the config to allow live requests."
-            )
+            raise JevBudgetExceeded("max_spend_usd is zero: every paid call is blocked")
         if self._usage.spent_usd >= self.max_spend_usd:
             raise JevBudgetExceeded(
                 f"spent ${self._usage.spent_usd:.4f} of a ${self.max_spend_usd:.4f} cap"

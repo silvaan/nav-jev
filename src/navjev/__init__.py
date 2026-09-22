@@ -1,3 +1,7 @@
-"""nav-jev: hierarchical, embedding-free retrieval with a System One traversal policy."""
+"""nav-jev: ask questions to long documents by walking their table of contents."""
 
-__version__ = "0.0.0"
+from navjev.navigator import Navigator
+from navjev.traverse.questions import Thresholds
+
+__version__ = "0.1.0"
+__all__ = ["Navigator", "Thresholds"]

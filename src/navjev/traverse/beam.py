@@ -48,9 +48,8 @@ class TraversalBudgetExceeded(RuntimeError):
 
 
 class TraversalPolicy(Protocol):
-    """Implemented by JevPolicy and by LlmPolicy, so the benchmark can swap the policy
-    while holding the tree, the beam mechanics, and the answering model fixed. That is
-    what makes arm C and arm D comparable."""
+    """What the beam needs from a decision-maker. JevPolicy is the one that ships; the
+    protocol exists so another model can be dropped in over the same tree and beam."""
 
     async def expand(self, tree: DocumentTree, node_id: NodeId, query: str) -> Expansion: ...
 
@@ -320,8 +319,8 @@ class LlmDecision:
     """An LLM's answer to the same questions Jev gets, mapped onto the same shape.
 
     The LLM returns an integer level per child, so each child decision is a point
-    estimate: one-hot probabilities and confidence 1.0. Calibration analysis must exclude
-    these; the trace marks them through `escalated_to_llm` or the arm's policy name.
+    estimate: one-hot probabilities and confidence 1.0, marked in the trace through
+    `escalated_to_llm`.
     """
 
     children: list[ChildDecision]
@@ -336,8 +335,7 @@ class LlmDecision:
 async def llm_decide(
     llm: LlmClient, model: str, state: dict[str, Any], child_count: int
 ) -> LlmDecision:
-    """One LLM call deciding an expansion from the Jev state. Shared by the fallback
-    (arm E) and the LLM traversal policy (arm C)."""
+    """One LLM call deciding an expansion from the Jev state, for the fallback."""
     completion = await llm.complete_json(
         model,
         LLM_TRAVERSAL_SYSTEM,
@@ -379,7 +377,7 @@ async def llm_decide(
 class LlmFallback:
     """Re-decides an expansion whose confidence fell below `tau_llm`.
 
-    Receives the same state. The escalation rate is a reported metric: a policy that
+    Receives the same state. Watch the escalation rate in the traces: a policy that
     escalates most of the time has not replaced the LLM, it has added a call in front
     of one.
     """

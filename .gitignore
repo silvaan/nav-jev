@@ -3,8 +3,6 @@ __pycache__/
 *.pyc
 .env
 index/
-data/
-results/*/raw/
 .cache/
 .ruff_cache/
 .mypy_cache/

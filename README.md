@@ -19,43 +19,45 @@ summaries, stored as plain JSON.
                  └─ Executive Compensation
 ```
 
----
-
 ## Install
-
-Python 3.11+.
 
 ```bash
 pip install git+https://github.com/silvaan/nav-jev.git
 ```
 
-Keys, in the environment or in a `.env` file in the working directory (the CLI reads it;
-from Python, call `navjev.env.load_dotenv()`):
+Python 3.11+. Two keys, in the environment or in a `.env` file where you run it:
 
 | Variable | Used for |
 |----------|----------|
 | `TYPESAFE_API_KEY` | Jev, the model that walks the tree |
-| `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | writing the section summaries at index time (`gpt-*` or `claude-*` models) |
-
-Every command that spends money takes a `--max-spend-usd` cap that defaults to zero, so
-nothing is charged by accident.
+| `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | the summaries written once per section at index time (`gpt-*` or `claude-*` models) |
 
 ## Use
 
-**1. Index a document** (Markdown, PDF with an outline, or DOCX):
+```python
+from navjev import Navigator
 
-```bash
-nav-jev build report.pdf --out index/report --summarizer gpt-4.1-mini --max-spend-usd 1
+nav = Navigator("index/")
+nav.add("report.pdf")                       # parse + summarize; cached, so re-adding is free
+hits = nav.search("What was the fiscal 2023 capital expenditure?")
+
+for h in hits["results"]:                   # best sections first
+    print(f"{h['score']:.2f}  {' > '.join(h['path'])}")
+    print(h["text"][:200])
 ```
 
-This parses the headings, writes one summary per section, and saves the tree to
-`index/report/docs/report.json`. Summaries are cached, so re-indexing an unchanged
-document is free.
+`add` takes Markdown, PDFs with an outline, or DOCX, and any number of them: `search`
+looks through every document in the index unless you pass `doc=`. Each hit carries the
+section's `title`, `path`, `pages` (for PDFs), `score` and full `text`; the dict also
+reports `cost_usd` and `no_answer`, which is true when the question is about nothing in
+the index. Pass `detail=True` to get every decision the walk made. Every method has an
+async twin (`a_add`, `a_search`), and `nav.usage` shows what has been spent.
 
-**2. Ask it something:**
+The same two steps from the shell:
 
 ```bash
-nav-jev ask index/report "What was the fiscal 2023 capital expenditure?" --max-spend-usd 0.1
+nav-jev add report.pdf
+nav-jev ask "What was the fiscal 2023 capital expenditure?" --detail
 ```
 
 ```
@@ -68,69 +70,34 @@ Acme Corp Annual Report 2023  stop=0.05 off_topic=0.07  model=jev-1.13.0
        Balance Sheet  score=0.09 conf=0.73
 
 [1.00] Acme Corp Annual Report 2023 > Financial Statements > Cash Flow
+cost $0.00013
 ```
 
 Each block is one Jev request: the section being looked at, how likely each child is to
-hold the answer, and `->` on the ones that were opened. The last line is the section to
-read. A question the document does not cover stops at the root with `no answer` instead
-of a forced guess.
-
-**3. From Python**, to feed the selected sections to your own model or UI:
-
-```python
-import asyncio
-from pathlib import Path
-
-from navjev.build.index import Index
-from navjev.env import load_dotenv
-from navjev.jev import JevClient
-from navjev.traverse.beam import BeamSearch, JevPolicy
-from navjev.traverse.questions import Thresholds
-
-load_dotenv()
-index = Index(Path("index/report"))
-tree = index.load_tree("report")
-
-thresholds = Thresholds().without_fallback()
-search = BeamSearch(JevPolicy(JevClient(max_spend_usd=0.1), thresholds), thresholds)
-result = asyncio.run(search.retrieve(tree, "What was the fiscal 2023 capital expenditure?"))
-
-for node in result.nodes:            # best sections first
-    print(" > ".join(tree.path_to(node.id)))
-    print(node.text[:300])
-print(result.trace.as_path_text(tree))   # the same explanation the CLI prints
-```
-
-`result.trace` holds every decision with its probability and confidence, and
-`result.cost_usd` what the query cost.
+hold the answer, and `->` on the ones that were opened. `--json` prints the raw result,
+`--max-spend-usd` stops a run once it has spent that much.
 
 ## How it decides
 
-The policy is a beam search. At each section, one request asks Jev to score every child
+The walk is a beam search. At each section, one request asks Jev to score every child
 ("how likely is this section to contain the evidence?") on a four-level scale, and
 whether the current section already answers the question. Children above a threshold
 enter the next round; if none does, the search backs up and tries the parent's other
 children. Everything Jev is asked, and every threshold, is in one file you can read and
-change: [`src/navjev/traverse/questions.py`](src/navjev/traverse/questions.py).
+change: [`src/navjev/traverse/questions.py`](src/navjev/traverse/questions.py). The
+full policy is in [`docs/algorithm.md`](docs/algorithm.md).
 
-Documents with no usable structure (a PDF without bookmarks, a plain `.txt`) can have an
-outline inferred by an LLM with `--allow-llm-structure`; the index is tagged so you know
-the tree was guessed rather than read.
+Files with no usable structure (a PDF without bookmarks, a plain `.txt`) can have an
+outline inferred by an LLM with `allow_llm_structure=True` (`--allow-llm-structure`);
+the index tags them so you know the tree was guessed rather than read.
 
-## Evaluating it
+## Options
 
-The repo also ships a benchmark harness that compares this policy against BM25, dense
-retrieval with a reranker, and an LLM making the same branch decisions, on FinanceBench,
-QASPER and NanoHotpotQA. No numbers are published yet; when they are, they will live in
-[`docs/findings.md`](docs/findings.md) with a manifest that reproduces them.
-
-```bash
-pip install "nav-jev[eval] @ git+https://github.com/silvaan/nav-jev.git"
-nav-jev dataset freeze qasper --max-queries 150
-nav-jev fit configs/qasper.yaml
-nav-jev bench configs/qasper.yaml
-nav-jev report results/<run>
-```
+`Navigator(index_dir, summarizer="gpt-4.1-mini", jev_model="jev-latest",
+max_spend_usd=None, thresholds=Thresholds(), allow_llm_structure=False)`. The
+thresholds are working defaults, not tuned ones; the first things to adjust for your own
+documents are `tau_expand` (how relevant a child must look to be opened) and `tau_stop`
+(how sure Jev must be that a section answers the question by itself).
 
 ## Development
 
@@ -138,7 +105,7 @@ nav-jev report results/<run>
 git clone git@github.com:silvaan/nav-jev.git && cd nav-jev
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest              # offline, no keys needed
+pytest              # offline, no keys needed; `pytest --live` spends a few cents
 ```
 
 ## License

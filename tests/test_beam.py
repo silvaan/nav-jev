@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 
-from navjev.baselines.llm_traversal import LlmPolicy
 from navjev.llm import ScriptedLlmClient
 from navjev.traverse.beam import BeamSearch, JevPolicy, LlmFallback, TraversalBudgetExceeded
 from navjev.traverse.questions import (
@@ -236,22 +235,3 @@ async def test_fallback_is_capped_per_query() -> None:
 def test_fallback_threshold_without_fallback_object_is_rejected() -> None:
     with pytest.raises(ValueError):
         JevPolicy(ScriptedJevClient(by_title({})), Thresholds(tau_llm=0.4))
-
-
-async def test_llm_policy_runs_in_the_same_beam() -> None:
-    tree = tree_from_spec(SPEC)
-
-    def llm(model: str, system: str, user: str, schema: Any) -> dict[str, Any]:
-        import json
-
-        state = json.loads(user.split("State:\n", 1)[1].rsplit("\n\nReturn one", 1)[0])
-        levels = [3 if c["title"] in ("B", "B1") else 0 for c in state["children"]]
-        return {"children": levels, "stop_here": 0.0}
-
-    llm_client = ScriptedLlmClient(llm, model_id="claude-x")
-    policy = LlmPolicy(llm_client, "claude-x", NO_FALLBACK)
-    result = await BeamSearch(policy, NO_FALLBACK).retrieve(tree, "q")
-    assert result.node_ids == ["B1"]
-    assert result.trace.model_ids == ["claude-x"]
-    assert all(c.confidence == 1.0 for e in result.trace.expansions for c in e.children)
-    assert "State:" in llm_client.calls[0]["user"]

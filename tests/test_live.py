@@ -1,6 +1,6 @@
-"""Paid tests. Run with `pytest --live` after raising max_spend_usd in
-configs/live-tests.yaml. The Jev test appends its real response to the offline fixture,
-so re-running it after a request change refreshes what the offline suite replays."""
+"""Paid tests, run with `pytest --live`. Capped at a few cents. The Jev test appends its
+real response to the offline fixture, so re-running it after a request change refreshes
+what the offline suite replays."""
 
 from __future__ import annotations
 
@@ -9,21 +9,16 @@ from pathlib import Path
 import pytest
 
 from navjev.jev import JevClient
-from tests.conftest import LIVE_CONFIG, live_spend_cap
 from tests.fixtures.make_jev_fixture import QUESTIONS, STATE
 
 pytestmark = pytest.mark.live
+LIVE_CAP_USD = 0.05
 
 
 @pytest.fixture
 def live_client() -> JevClient:
-    import yaml
-
-    data = yaml.safe_load(LIVE_CONFIG.read_text())
     return JevClient(
-        model=data.get("jev_model", "jev-latest"),
-        max_spend_usd=live_spend_cap(),
-        rate_per_million=float(data.get("rate_per_million", 0.042)),
+        max_spend_usd=LIVE_CAP_USD,
         record_to=Path(__file__).parent / "fixtures" / "jev_fixture.jsonl",
     )
 

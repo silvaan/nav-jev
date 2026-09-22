@@ -1,13 +1,12 @@
 """Every question and every threshold in the retrieval policy.
 
-This file is the audit surface. A reviewer reads it alone to know what the system asks
-and when it acts. Nothing that shapes a decision may live anywhere else: the state
-layout the questions point into, the Jev questions, the escalation rule, the prompts the
-LLM arms receive, and the thresholds are all here.
+This file is the audit surface. A reader goes through it alone to know what the system
+asks and when it acts. Nothing that shapes a decision lives anywhere else: the state
+layout the questions point into, the Jev questions, the decision rules, the thresholds,
+and the prompt the optional LLM fallback receives.
 
-Versioning: bump PROMPT_VERSION on any change to a question or a criterion. Thresholds
-are fitted per (PROMPT_VERSION, jev model ID, dataset) and a run whose manifest does not
-match its thresholds' provenance is rejected by the runner.
+Bump PROMPT_VERSION on any change to a question or a criterion: thresholds tuned against
+one wording do not carry over to another.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
-from pathlib import Path
 from typing import Any
 
 from navjev.jev import Noul, Score
@@ -189,9 +187,9 @@ def expansion_questions(child_count: int, at_root: bool) -> dict[str, Noul | Sco
 class Thresholds:
     """All values are on normalized scores in [0, 1] or on Noul probabilities in [0, 1].
 
-    The defaults below are starting points, not fitted values. A benchmark arm must load
-    thresholds fitted on a dev split and recorded with `threshold_source: dev`, or the
-    runner refuses the run.
+    The defaults are working values for the current questions, not tuned ones. Anyone
+    measuring the policy on their own documents should expect to adjust `tau_expand` and
+    `tau_stop` first.
     """
 
     tau_expand: float = 0.55
@@ -200,9 +198,9 @@ class Thresholds:
     tau_stop: float = 0.70
     """Noul probability above which the current node is emitted as a result."""
 
-    tau_llm: float = 0.40
-    """Confidence below which the expansion is re-decided by an LLM. Set to 0.0 to
-    disable the fallback, which is what benchmark arm D does."""
+    tau_llm: float = 0.0
+    """Confidence below which the expansion is re-decided by an LLM. Zero, the default,
+    disables the fallback; the Navigator never enables it."""
 
     tau_off_topic: float = 0.85
     """Deliberately high. Declaring a document irrelevant ends the search, so it needs
@@ -213,11 +211,6 @@ class Thresholds:
     max_expansions: int = 24
     """Per-query call budget. A runaway traversal is a cost bug, so it fails loudly."""
 
-    prompt_version: str = PROMPT_VERSION
-    jev_model_id: str | None = None
-    fitted_on: str | None = None
-    """Dataset split the thresholds were fitted on. None means unfitted defaults."""
-
     @property
     def fallback_enabled(self) -> bool:
         return self.tau_llm > 0.0
@@ -227,19 +220,6 @@ class Thresholds:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Thresholds:
-        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
-
-    def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-
-    @classmethod
-    def load(cls, path: Path) -> Thresholds:
-        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 DEFAULT_THRESHOLDS = Thresholds()
@@ -282,11 +262,11 @@ def needs_escalation(children: Sequence[ChildDecision], thresholds: Thresholds) 
 
 
 # --------------------------------------------------------------------------------------
-# LLM prompts, for arm C (LLM traversal) and arm E (LLM fallback)
+# The prompt for the optional LLM fallback
 #
-# Both receive exactly the state Jev receives and return the same shape: one relevance
-# level per child on the same scale, and a stop probability. That keeps the traces
-# comparable and makes the comparison one of policy, not of information.
+# It receives exactly the state Jev receives and returns the same shape: one relevance
+# level per child on the same scale, and a stop probability, so a trace reads the same
+# whichever model decided.
 # --------------------------------------------------------------------------------------
 
 LLM_TRAVERSAL_SYSTEM = (

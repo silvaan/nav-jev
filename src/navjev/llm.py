@@ -1,7 +1,7 @@
 """The one place that talks to a text-generating LLM.
 
-Four callers share it: node summarization at index time, the LLM fallback (arm E), the
-LLM traversal policy (arm C), and the answering model that every arm shares. Each call
+Two callers share it: node summarization at index time and the optional LLM fallback
+in the traversal. Each call
 returns JSON that matches a schema the caller supplies, so no caller parses free text.
 
 Two providers, chosen by model name: `claude-*` goes to the Anthropic Messages API with
@@ -73,15 +73,15 @@ def request_key(model: str, system: str, user: str, schema: Mapping[str, Any]) -
 
 
 class LlmClient:
-    """Async client over the Anthropic Messages API with JSON-schema output.
+    """Async client over the OpenAI or Anthropic API with JSON-schema output.
 
-    `max_spend_usd` defaults to zero and blocks every call, as with the Jev client.
+    `max_spend_usd` works as in `JevClient`: `None` is uncapped, `0.0` blocks every call.
     """
 
     def __init__(
         self,
         rates: Mapping[str, LlmRate] | None = None,
-        max_spend_usd: float = 0.0,
+        max_spend_usd: float | None = None,
         max_concurrency: int = 4,
         record_to: str | Path | None = None,
         api_key: str | None = None,
@@ -118,10 +118,10 @@ class LlmClient:
         )
 
     def _check_budget(self) -> None:
+        if self.max_spend_usd is None:
+            return
         if self.max_spend_usd <= 0.0:
-            raise LlmBudgetExceeded(
-                "max_spend_usd is zero: every LLM call is blocked. Raise it explicitly."
-            )
+            raise LlmBudgetExceeded("max_spend_usd is zero: every LLM call is blocked")
         if self._usage.spent_usd >= self.max_spend_usd:
             raise LlmBudgetExceeded(
                 f"spent ${self._usage.spent_usd:.4f} of a ${self.max_spend_usd:.4f} cap"

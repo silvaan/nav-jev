@@ -11,9 +11,8 @@ nodes whose full text is then handed to an answering model, plus a trace of ever
 
 Indexing uses no Jev. The parser recovers the native hierarchy: ATX headings for Markdown,
 the outline or bookmark tree for PDF, heading styles for DOCX. Documents with no usable
-structure fall back to a heading-detection pass by an LLM, flagged in the index metadata,
-because that fallback changes what the experiment is measuring and must not be silently
-mixed into a result.
+structure can fall back to a heading-detection pass by an LLM, flagged in the index
+metadata, because a guessed outline is a different thing from the author's own.
 
 Each node gets a summary of at most 60 words written by a cheap LLM from the node's own
 text plus its ancestors' titles, so a subsection summary is not ambiguous when read out
@@ -61,30 +60,27 @@ Normalization matters and is a code concern, not a model one. A raw `score` is t
 probability-weighted mean of level indices, so it is divided by the top level index before
 any comparison against a threshold or across questions with different scale lengths.
 
-## Fallback
+## Fallback (off by default)
 
-A node expansion whose `confidence` falls below `tau_llm` on the decisive questions is
-re-decided by an LLM given the same state. The fraction of expansions that escalate is a
-reported metric, not an implementation detail: a policy that escalates 60% of the time has
-not replaced the LLM, it has added a call in front of it. The evaluation therefore reports
-cost and latency both with and without the fallback enabled.
+A node expansion whose `confidence` falls below `tau_llm` on the decisive questions can be
+re-decided by an LLM given the same state. `Navigator` never enables it; it exists for
+anyone measuring the policy who wants a safety net, and the trace marks every escalation.
+A policy that escalates most of the time has not replaced the LLM, it has added a call in
+front of it.
 
-## Complexity and where the saving is supposed to come from
+## Where the saving comes from
 
-For a tree of branching factor `k` and depth `d`, LLM traversal makes `O(b·d)` sequential
-reasoning calls, each carrying the sibling summaries. Jev traversal makes the same number
-of requests, but each is a fan-out of `k+2` independent questions answered in parallel at
-roughly 100 milliseconds, against seconds for a reasoning model. The token counts are
-comparable, since both send the same state; the price per token is not. This is the whole
-hypothesis, and it is why the headline metric is cost and latency at matched recall rather
-than recall alone.
+For a tree of branching factor `k` and depth `d`, an LLM walking the tree makes `O(b·d)`
+sequential reasoning calls, each carrying the sibling summaries. Jev traversal makes the
+same number of requests, but each is a fan-out of `k+2` independent questions answered in
+one call by a model that does not generate text. The token counts are comparable, since
+both send the same state; the price per token and the latency per call are not.
 
-## Failure modes to test for explicitly
+## Known weak spots
 
 Deep narrow trees, where an early wrong turn is unrecoverable and the dead-end rule is
 load-bearing. Documents whose section titles are uninformative, where the summary quality
-dominates and the comparison is really about the summarizer. Queries needing evidence from
-two distant sections, which the beam width has to accommodate and which single-path
-traversal cannot answer at all. Adversarial text inside a document that addresses the
-model directly, since TypeSafe states that state is treated as data but that steering text
-can still move an answer.
+dominates. Questions needing evidence from two distant sections, which the beam width has
+to accommodate. Adversarial text inside a document that addresses the model directly:
+TypeSafe states that state is treated as data, but steering text can still move an
+answer.
